@@ -1,309 +1,299 @@
- (cd "$(git rev-parse --show-toplevel)" && git apply --3way <<'EOF' 
-diff --git a/text_rpg.py b/text_rpg.py
-new file mode 100644
-index 0000000000000000000000000000000000000000..8012354d8dc971ede2bd98dad17e1b1b39b96951
---- /dev/null
-+++ b/text_rpg.py
-@@ -0,0 +1,299 @@
-+"""Simple text-based RPG game.
-+"""
-+from __future__ import annotations
-+
-+import random
-+from dataclasses import dataclass, field
-+from typing import Dict, List, Optional
-+
-+
-+@dataclass
-+class Item:
-+    """Represent an item that can be used by the player."""
-+
-+    name: str
-+    description: str
-+    heal: int = 0
-+    attack: int = 0
-+
-+    def apply(self, player: Player) -> str:
-+        """Apply the item's effect to the given player."""
-+
-+        message_parts: List[str] = [f"You use the {self.name}."]
-+        if self.heal:
-+            player.hp = min(player.max_hp, player.hp + self.heal)
-+            message_parts.append(f"You recover {self.heal} HP.")
-+        if self.attack:
-+            player.attack += self.attack
-+            message_parts.append(f"Your attack increases by {self.attack}.")
-+        return " ".join(message_parts)
-+
-+
-+@dataclass
-+class Enemy:
-+    """Represent an enemy in the game."""
-+
-+    name: str
-+    hp: int
-+    attack: int
-+    reward: int
-+
-+    def is_alive(self) -> bool:
-+        return self.hp > 0
-+
-+
-+@dataclass
-+class Player:
-+    """Represent the player character."""
-+
-+    name: str
-+    role: str
-+    hp: int
-+    max_hp: int
-+    attack: int
-+    defense: int
-+    gold: int = 0
-+    inventory: List[Item] = field(default_factory=list)
-+
-+    def is_alive(self) -> bool:
-+        return self.hp > 0
-+
-+    def take_damage(self, damage: int) -> int:
-+        mitigated = max(0, damage - self.defense)
-+        self.hp = max(0, self.hp - mitigated)
-+        return mitigated
-+
-+    def receive_item(self, item: Item) -> None:
-+        self.inventory.append(item)
-+
-+    def remove_item(self, item: Item) -> None:
-+        self.inventory.remove(item)
-+
-+
-+class Game:
-+    """Main game controller handling interactions and state."""
-+
-+    roles: Dict[str, Dict[str, int]] = {
-+        "warrior": {"hp": 30, "attack": 5, "defense": 3},
-+        "mage": {"hp": 22, "attack": 7, "defense": 1},
-+        "rogue": {"hp": 26, "attack": 6, "defense": 2},
-+    }
-+
-+    rooms: List[Dict[str, Optional[str]]] = [
-+        {
-+            "name": "Ancient Gate",
-+            "description": "Crumbling stone arches lead into a forgotten city.",
-+            "enemy": None,
-+        },
-+        {
-+            "name": "Whispering Bazaar",
-+            "description": "Stalls creak in the wind, their wares long abandoned.",
-+            "enemy": "Thief",
-+        },
-+        {
-+            "name": "Temple of Sparks",
-+            "description": "Crackling energy dances between shattered pillars.",
-+            "enemy": "Cultist",
-+        },
-+        {
-+            "name": "Crystal Cavern",
-+            "description": "Luminescent crystals pulse with a faint heartbeat.",
-+            "enemy": "Crystal Wyrmling",
-+        },
-+        {
-+            "name": "Throne of Dust",
-+            "description": "An empty throne waits for a ruler brave enough to claim it.",
-+            "enemy": "The Regent of Ash",
-+        },
-+    ]
-+
-+    enemy_templates: Dict[str, Enemy] = {
-+        "Thief": Enemy("Thief", 15, 4, 10),
-+        "Cultist": Enemy("Cultist", 18, 5, 12),
-+        "Crystal Wyrmling": Enemy("Crystal Wyrmling", 22, 6, 15),
-+        "The Regent of Ash": Enemy("The Regent of Ash", 28, 7, 25),
-+    }
-+
-+    def __init__(self) -> None:
-+        self.player: Optional[Player] = None
-+        self.current_room_index = 0
-+        self.game_over = False
-+
-+    def choose_role(self, name: str, role_key: str) -> Player:
-+        role_key = role_key.lower()
-+        if role_key not in self.roles:
-+            raise ValueError(f"Unknown role '{role_key}'. Choose from: {', '.join(self.roles)}")
-+
-+        stats = self.roles[role_key]
-+        player = Player(
-+            name=name,
-+            role=role_key.title(),
-+            hp=stats["hp"],
-+            max_hp=stats["hp"],
-+            attack=stats["attack"],
-+            defense=stats["defense"],
-+        )
-+        self.player = player
-+        self.current_room_index = 0
-+        self.game_over = False
-+        return player
-+
-+    def current_room(self) -> Dict[str, Optional[str]]:
-+        return self.rooms[self.current_room_index]
-+
-+    def move_next(self) -> str:
-+        if self.current_room_index >= len(self.rooms) - 1:
-+            self.game_over = True
-+            return "You stand victorious at the Throne of Dust. The city is yours!"
-+        self.current_room_index += 1
-+        return self.describe_room()
-+
-+    def describe_room(self) -> str:
-+        room = self.current_room()
-+        description = f"You are in the {room['name']}. {room['description']}"
-+        if room["enemy"]:
-+            description += f" An enemy approaches: {room['enemy']}!"
-+        else:
-+            description += " The path ahead seems quiet."
-+        return description
-+
-+    def spawn_enemy(self) -> Optional[Enemy]:
-+        room = self.current_room()
-+        enemy_name = room.get("enemy")
-+        if not enemy_name:
-+            return None
-+        template = self.enemy_templates[enemy_name]
-+        return Enemy(template.name, template.hp, template.attack, template.reward)
-+
-+    def loot_table(self) -> Item:
-+        return random.choice(
-+            [
-+                Item("Healing Draught", "Restores 10 HP.", heal=10),
-+                Item("Sharpening Stone", "Increases attack by 2.", attack=2),
-+                Item("Glowing Berry", "Restores 6 HP.", heal=6),
-+            ]
-+        )
-+
-+    def rest(self) -> str:
-+        assert self.player is not None
-+        heal_amount = max(4, int(self.player.max_hp * 0.25))
-+        self.player.hp = min(self.player.max_hp, self.player.hp + heal_amount)
-+        return f"You take a moment to rest and recover {heal_amount} HP."
-+
-+    def combat(self, enemy: Enemy) -> List[str]:
-+        assert self.player is not None
-+        log: List[str] = []
-+        while enemy.is_alive() and self.player.is_alive():
-+            damage = max(1, self.player.attack + random.randint(-1, 2))
-+            enemy.hp -= damage
-+            log.append(f"You strike the {enemy.name} for {damage} damage.")
-+            if enemy.is_alive():
-+                log.append(f"The {enemy.name} has {enemy.hp} HP remaining.")
-+            else:
-+                break
-+
-+            incoming = max(1, enemy.attack + random.randint(-2, 2))
-+            taken = self.player.take_damage(incoming)
-+            log.append(f"The {enemy.name} hits you for {taken} damage.")
-+            log.append(f"You have {self.player.hp}/{self.player.max_hp} HP remaining.")
-+        if self.player.is_alive():
-+            self.player.gold += enemy.reward
-+            loot = self.loot_table()
-+            self.player.receive_item(loot)
-+            log.append(
-+                f"You defeat the {enemy.name} and claim {enemy.reward} gold."
-+                f" You also find a {loot.name}!"
-+            )
-+        else:
-+            self.game_over = True
-+            log.append("You fall in battle. The city fades into darkness...")
-+        return log
-+
-+    def use_item(self, item_name: str) -> str:
-+        assert self.player is not None
-+        for item in list(self.player.inventory):
-+            if item.name.lower() == item_name.lower():
-+                message = item.apply(self.player)
-+                self.player.remove_item(item)
-+                return message
-+        return f"You do not possess an item called '{item_name}'."
-+
-+
-+def prompt_choice(prompt: str, options: List[str]) -> str:
-+    while True:
-+        choice = input(prompt).strip().lower()
-+        if choice in options:
-+            return choice
-+        print(f"Please choose from: {', '.join(options)}")
-+
-+
-+def present_inventory(player: Player) -> None:
-+    if not player.inventory:
-+        print("Your pack is empty.")
-+        return
-+    print("You rummage through your pack:")
-+    for idx, item in enumerate(player.inventory, start=1):
-+        effect = []
-+        if item.heal:
-+            effect.append(f"heals {item.heal} HP")
-+        if item.attack:
-+            effect.append(f"+{item.attack} attack")
-+        detail = f" ({', '.join(effect)})" if effect else ""
-+        print(f" {idx}. {item.name}{detail} - {item.description}")
-+
-+
-+def main() -> None:
-+    game = Game()
-+    print("Welcome to Ruins of the Regent, a text RPG adventure!")
-+    name = input("What is your name, explorer? ").strip() or "Nameless"
-+    role = prompt_choice(
-+        "Choose your path (warrior/mage/rogue): ", list(Game.roles.keys())
-+    )
-+    player = game.choose_role(name, role)
-+    print(
-+        f"{player.name} the {player.role} enters the city with {player.hp} HP, "
-+        f"{player.attack} attack, and {player.defense} defense."
-+    )
-+    print(game.describe_room())
-+
-+    while not game.game_over and player.is_alive():
-+        command = input("\nWhat will you do? (move/rest/status/inventory/use/quit) ").strip().lower()
-+        if command == "move":
-+            enemy = game.spawn_enemy()
-+            if enemy:
-+                print(f"A {enemy.name} blocks your path!")
-+                log = game.combat(enemy)
-+                for entry in log:
-+                    print(entry)
-+                if game.game_over or not player.is_alive():
-+                    break
-+            print(game.move_next())
-+        elif command == "rest":
-+            print(game.rest())
-+        elif command == "status":
-+            print(
-+                f"{player.name} - HP: {player.hp}/{player.max_hp}, "
-+                f"Attack: {player.attack}, Defense: {player.defense}, Gold: {player.gold}"
-+            )
-+        elif command == "inventory":
-+            present_inventory(player)
-+        elif command.startswith("use"):
-+            _, _, item_name = command.partition(" ")
-+            if not item_name:
-+                item_name = input("Which item will you use? ")
-+            print(game.use_item(item_name))
-+        elif command == "quit":
-+            print("You decide to leave the ruins for now.")
-+            break
-+        else:
-+            print("Unrecognized command. Try again.")
-+
-+    if not player.is_alive():
-+        print("Your journey ends here, but legends speak of your bravery.")
-+    elif game.game_over:
-+        print("Congratulations! You have restored hope to the forgotten city.")
-+    print("Thanks for playing!")
-+
-+
-+if __name__ == "__main__":
-+    main()
- 
-EOF
-)
+"""Simple text-based RPG game.
+"""
+from __future__ import annotations
+
+import random
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
+
+
+@dataclass
+class Item:
+    """Represent an item that can be used by the player."""
+
+    name: str
+    description: str
+    heal: int = 0
+    attack: int = 0
+
+    def apply(self, player: Player) -> str:
+        """Apply the item's effect to the given player."""
+
+        message_parts: List[str] = [f"You use the {self.name}."]
+        if self.heal:
+            player.hp = min(player.max_hp, player.hp + self.heal)
+            message_parts.append(f"You recover {self.heal} HP.")
+        if self.attack:
+            player.attack += self.attack
+            message_parts.append(f"Your attack increases by {self.attack}.")
+        return " ".join(message_parts)
+
+
+@dataclass
+class Enemy:
+    """Represent an enemy in the game."""
+
+    name: str
+    hp: int
+    attack: int
+    reward: int
+
+    def is_alive(self) -> bool:
+        return self.hp > 0
+
+
+@dataclass
+class Player:
+    """Represent the player character."""
+
+    name: str
+    role: str
+    hp: int
+    max_hp: int
+    attack: int
+    defense: int
+    gold: int = 0
+    inventory: List[Item] = field(default_factory=list)
+
+    def is_alive(self) -> bool:
+        return self.hp > 0
+
+    def take_damage(self, damage: int) -> int:
+        mitigated = max(0, damage - self.defense)
+        self.hp = max(0, self.hp - mitigated)
+        return mitigated
+
+    def receive_item(self, item: Item) -> None:
+        self.inventory.append(item)
+
+    def remove_item(self, item: Item) -> None:
+        self.inventory.remove(item)
+
+
+class Game:
+    """Main game controller handling interactions and state."""
+
+    roles: Dict[str, Dict[str, int]] = {
+        "warrior": {"hp": 30, "attack": 5, "defense": 3},
+        "mage": {"hp": 22, "attack": 7, "defense": 1},
+        "rogue": {"hp": 26, "attack": 6, "defense": 2},
+    }
+
+    rooms: List[Dict[str, Optional[str]]] = [
+        {
+            "name": "Ancient Gate",
+            "description": "Crumbling stone arches lead into a forgotten city.",
+            "enemy": None,
+        },
+        {
+            "name": "Whispering Bazaar",
+            "description": "Stalls creak in the wind, their wares long abandoned.",
+            "enemy": "Thief",
+        },
+        {
+            "name": "Temple of Sparks",
+            "description": "Crackling energy dances between shattered pillars.",
+            "enemy": "Cultist",
+        },
+        {
+            "name": "Crystal Cavern",
+            "description": "Luminescent crystals pulse with a faint heartbeat.",
+            "enemy": "Crystal Wyrmling",
+        },
+        {
+            "name": "Throne of Dust",
+            "description": "An empty throne waits for a ruler brave enough to claim it.",
+            "enemy": "The Regent of Ash",
+        },
+    ]
+
+    enemy_templates: Dict[str, Enemy] = {
+        "Thief": Enemy("Thief", 15, 4, 10),
+        "Cultist": Enemy("Cultist", 18, 5, 12),
+        "Crystal Wyrmling": Enemy("Crystal Wyrmling", 22, 6, 15),
+        "The Regent of Ash": Enemy("The Regent of Ash", 28, 7, 25),
+    }
+
+    def __init__(self) -> None:
+        self.player: Optional[Player] = None
+        self.current_room_index = 0
+        self.game_over = False
+
+    def choose_role(self, name: str, role_key: str) -> Player:
+        role_key = role_key.lower()
+        if role_key not in self.roles:
+            raise ValueError(f"Unknown role '{role_key}'. Choose from: {', '.join(self.roles)}")
+
+        stats = self.roles[role_key]
+        player = Player(
+            name=name,
+            role=role_key.title(),
+            hp=stats["hp"],
+            max_hp=stats["hp"],
+            attack=stats["attack"],
+            defense=stats["defense"],
+        )
+        self.player = player
+        self.current_room_index = 0
+        self.game_over = False
+        return player
+
+    def current_room(self) -> Dict[str, Optional[str]]:
+        return self.rooms[self.current_room_index]
+
+    def move_next(self) -> str:
+        if self.current_room_index >= len(self.rooms) - 1:
+            self.game_over = True
+            return "You stand victorious at the Throne of Dust. The city is yours!"
+        self.current_room_index += 1
+        return self.describe_room()
+
+    def describe_room(self) -> str:
+        room = self.current_room()
+        description = f"You are in the {room['name']}. {room['description']}"
+        if room["enemy"]:
+            description += f" An enemy approaches: {room['enemy']}!"
+        else:
+            description += " The path ahead seems quiet."
+        return description
+
+    def spawn_enemy(self) -> Optional[Enemy]:
+        room = self.current_room()
+        enemy_name = room.get("enemy")
+        if not enemy_name:
+            return None
+        template = self.enemy_templates[enemy_name]
+        return Enemy(template.name, template.hp, template.attack, template.reward)
+
+    def loot_table(self) -> Item:
+        return random.choice(
+            [
+                Item("Healing Draught", "Restores 10 HP.", heal=10),
+                Item("Sharpening Stone", "Increases attack by 2.", attack=2),
+                Item("Glowing Berry", "Restores 6 HP.", heal=6),
+            ]
+        )
+
+    def rest(self) -> str:
+        assert self.player is not None
+        heal_amount = max(4, int(self.player.max_hp * 0.25))
+        self.player.hp = min(self.player.max_hp, self.player.hp + heal_amount)
+        return f"You take a moment to rest and recover {heal_amount} HP."
+
+    def combat(self, enemy: Enemy) -> List[str]:
+        assert self.player is not None
+        log: List[str] = []
+        while enemy.is_alive() and self.player.is_alive():
+            damage = max(1, self.player.attack + random.randint(-1, 2))
+            enemy.hp -= damage
+            log.append(f"You strike the {enemy.name} for {damage} damage.")
+            if enemy.is_alive():
+                log.append(f"The {enemy.name} has {enemy.hp} HP remaining.")
+            else:
+                break
+
+            incoming = max(1, enemy.attack + random.randint(-2, 2))
+            taken = self.player.take_damage(incoming)
+            log.append(f"The {enemy.name} hits you for {taken} damage.")
+            log.append(f"You have {self.player.hp}/{self.player.max_hp} HP remaining.")
+        if self.player.is_alive():
+            self.player.gold += enemy.reward
+            loot = self.loot_table()
+            self.player.receive_item(loot)
+            log.append(
+                f"You defeat the {enemy.name} and claim {enemy.reward} gold."
+                f" You also find a {loot.name}!"
+            )
+        else:
+            self.game_over = True
+            log.append("You fall in battle. The city fades into darkness...")
+        return log
+
+    def use_item(self, item_name: str) -> str:
+        assert self.player is not None
+        for item in list(self.player.inventory):
+            if item.name.lower() == item_name.lower():
+                message = item.apply(self.player)
+                self.player.remove_item(item)
+                return message
+        return f"You do not possess an item called '{item_name}'."
+
+
+def prompt_choice(prompt: str, options: List[str]) -> str:
+    while True:
+        choice = input(prompt).strip().lower()
+        if choice in options:
+            return choice
+        print(f"Please choose from: {', '.join(options)}")
+
+
+def present_inventory(player: Player) -> None:
+    if not player.inventory:
+        print("Your pack is empty.")
+        return
+    print("You rummage through your pack:")
+    for idx, item in enumerate(player.inventory, start=1):
+        effect = []
+        if item.heal:
+            effect.append(f"heals {item.heal} HP")
+        if item.attack:
+            effect.append(f"+{item.attack} attack")
+        detail = f" ({', '.join(effect)})" if effect else ""
+        print(f" {idx}. {item.name}{detail} - {item.description}")
+
+
+def main() -> None:
+    game = Game()
+    print("Welcome to Ruins of the Regent, a text RPG adventure!")
+    name = input("What is your name, explorer? ").strip() or "Nameless"
+    role = prompt_choice(
+        "Choose your path (warrior/mage/rogue): ", list(Game.roles.keys())
+    )
+    player = game.choose_role(name, role)
+    print(
+        f"{player.name} the {player.role} enters the city with {player.hp} HP, "
+        f"{player.attack} attack, and {player.defense} defense."
+    )
+    print(game.describe_room())
+
+    while not game.game_over and player.is_alive():
+        command = input("\nWhat will you do? (move/rest/status/inventory/use/quit) ").strip().lower()
+        if command == "move":
+            enemy = game.spawn_enemy()
+            if enemy:
+                print(f"A {enemy.name} blocks your path!")
+                log = game.combat(enemy)
+                for entry in log:
+                    print(entry)
+                if game.game_over or not player.is_alive():
+                    break
+            print(game.move_next())
+        elif command == "rest":
+            print(game.rest())
+        elif command == "status":
+            print(
+                f"{player.name} - HP: {player.hp}/{player.max_hp}, "
+                f"Attack: {player.attack}, Defense: {player.defense}, Gold: {player.gold}"
+            )
+        elif command == "inventory":
+            present_inventory(player)
+        elif command.startswith("use"):
+            _, _, item_name = command.partition(" ")
+            if not item_name:
+                item_name = input("Which item will you use? ")
+            print(game.use_item(item_name))
+        elif command == "quit":
+            print("You decide to leave the ruins for now.")
+            break
+        else:
+            print("Unrecognized command. Try again.")
+
+    if not player.is_alive():
+        print("Your journey ends here, but legends speak of your bravery.")
+    elif game.game_over:
+        print("Congratulations! You have restored hope to the forgotten city.")
+    print("Thanks for playing!")
+
+
+if __name__ == "__main__":
+    main()
